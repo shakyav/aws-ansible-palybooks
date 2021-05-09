@@ -1,0 +1,24 @@
+- name: launch vpc
+  hosts: localhost
+  tasks:
+    - name: launch vpc in aws  
+
+      amazon.aws.ec2_vpc_net:
+        state: present
+        cidr_block: 172.22.0.0/16
+        resource_tags: { "Environment":"Development" }
+        name: "ansible_test_vpc"
+        region: us-east-1
+      register: vpc
+    - name: Create subnet for database servers
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id}}"
+        cidr: 172.22.1.0/24
+        map_public: "yes"
+        az: us-east-1a
+        
+        resource_tags:
+            Name: "public subnet-1"
+      register: web_subnet
+
