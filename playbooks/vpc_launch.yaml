@@ -1,5 +1,6 @@
 - name: launch vpc
   hosts: localhost
+  gather_facts: true
   tasks:
     - name: launch vpc in aws  
 
@@ -10,7 +11,8 @@
         name: "ansible_test_vpc"
         region: us-east-1
       register: vpc
-    - name: Create subnet for database servers
+
+    - name: Create Public subnet
       amazon.aws.ec2_vpc_subnet:
         state: present
         vpc_id: "{{ vpc.vpc.id}}"
@@ -20,5 +22,67 @@
         
         resource_tags:
             Name: "public subnet-1"
-      register: web_subnet
+      register: public_subnet
+
+    - name: Create private subnet
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id}}"
+        cidr: 172.22.2.0/24
+        map_public: "no"
+        az: us-east-1a
+        
+        resource_tags:
+            Name: "private subnet-1"
+      register: private_subnet_1
+
+    - name: Create private subnet 2
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id}}"
+        cidr: 172.22.3.0/24
+        map_public: "no"
+        az: us-east-1a
+        
+        resource_tags:
+            Name: "private subnet-2"
+      register: private_subnet_2
+
+    - name: create IGW
+      community.aws.ec2_vpc_igw:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: us-east-1
+        state: "present"
+        tags:
+           Name: "ansible IGW"
+      register: igw
+
+    - name: Create new nat gateway and allocate new EIP.
+      community.aws.ec2_vpc_nat_gateway:
+        state: present
+        subnet_id: "{{ public_subnet.subnet.id }}"
+        wait: true
+        region: us-east-1
+        if_exist_do_not_create: true
+      register: new_nat_gateway
+    - debug: var=new_nat_gateway
+
+    
+    - name: Set up NAT-protected route table
+      community.aws.ec2_vpc_route_table:
+        vpc_id: "{{vpc.vpc.id}}"
+        region: us-east-1
+        tags:
+           Name: Internal
+        subnets:
+          - "{{ private_subnet_1.subnet.id }}"
+          - "{{ private_subnet_2.subnet.id }}"
+          
+        routes:
+          - dest: 0.0.0.0/0
+            nat_gateway_id: "{{ new_nat_gateway.nat_gateway_id }}"
+      register: nat_route_table
+    - debug: var=nat_route_table
+    
+    
 
