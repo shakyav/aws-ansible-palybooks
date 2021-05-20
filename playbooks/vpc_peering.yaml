@@ -1,0 +1,198 @@
+- name: launch vpc
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: launch vpc in aws  
+
+      amazon.aws.ec2_vpc_net:
+        state: present
+        cidr_block: 172.22.0.0/16
+        resource_tags: { "Environment":"Development" }
+        name: "ansible_test_vpc_A"
+        region: us-east-1
+      register: vpc_A
+
+    - name: Create Public subnet in vpc A
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc_A.vpc.id}}"
+        cidr: 172.22.1.0/24
+        map_public: "yes"
+        az: us-east-1a
+        
+        resource_tags:
+            Name: "public subnet-1"
+      register: public_subnet_vpc_A
+
+    - name: create IGW
+      community.aws.ec2_vpc_igw:
+        vpc_id: "{{ vpc_A.vpc.id }}"
+        region: us-east-1
+        state: "present"
+        tags:
+           Name: "ansible IGW VPC_A"
+      register: igw_A
+
+    - name: Set up public subnet route table
+      community.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc_A.vpc.id }}"
+        region: us-east-1
+        tags:
+          Name: Public
+        subnets:
+          - "{{ public_subnet_vpc_A.subnet.id }}"
+          
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_A.gateway_id }}"
+      register: public_route_table_VPC_A
+
+
+    - name: Create Security Group
+      amazon.aws.ec2_group:
+        name: basic sg VPC A
+        description: DMZ Security Group
+        vpc_id: "{{ vpc_A.vpc.id }}"
+        region: us-east-1
+        rules:
+          - proto: tcp
+            ports:
+            - 80
+            cidr_ip: 10.8.1.0/24
+          - proto: tcp
+            ports:
+            - 22
+            cidr_ip: 0.0.0.0/0
+          - proto: icmp
+            from_port: 8
+            to_port: -1
+            cidr_ip: 10.8.1.0/24
+      register: security_group_basic_VPC_A
+
+    - name: launch vpc in aws  
+
+      amazon.aws.ec2_vpc_net:
+        state: present
+        cidr_block: 10.8.0.0/16
+        resource_tags: { "Environment":"Development" }
+        name: "ansible_test_vpc_B"
+        region: us-east-1
+      register: vpc_B
+
+    - name: Create Public subnet in vpc B
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc_B.vpc.id}}"
+        cidr: 10.8.1.0/24
+        map_public: "yes"
+        az: us-east-1a
+        
+        resource_tags:
+            Name: "public subnet-1"
+      register: public_subnet_vpc_B
+
+    - name: create IGW
+      community.aws.ec2_vpc_igw:
+        vpc_id: "{{ vpc_B.vpc.id }}"
+        region: us-east-1
+        state: "present"
+        tags:
+           Name: "ansible IGW_VPC_B"
+      register: igw_B
+
+    - name: Set up public subnet route table
+      community.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc_B.vpc.id }}"
+        region: us-east-1
+        tags:
+          Name: Public
+        subnets:
+          - "{{ public_subnet_vpc_B.subnet.id }}"
+          
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_B.gateway_id }}"
+      register: public_route_table_VPC_B
+
+    - name: Create Security Group
+      amazon.aws.ec2_group:
+        name: basic sg VPC B
+        description: DMZ Security Group
+        vpc_id: "{{ vpc_B.vpc.id }}"
+        region: us-east-1
+        rules:
+          - proto: tcp
+            ports:
+            - 80
+            cidr_ip: 172.22.1.0/24
+          - proto: tcp
+            ports:
+            - 22
+            cidr_ip: 0.0.0.0/0
+          - proto: icmp
+            from_port: 8
+            to_port: -1
+            cidr_ip: 172.22.1.0/24
+          - proto: icmp
+            from_port: 8
+            to_port: -1
+            cidr_ip: 0.0.0.0/0
+      register: security_group_basic_VPC_B
+    - debug: var=security_group_basic_VPC_B
+
+
+    - name: Create local account VPC peering Connection
+      community.aws.ec2_vpc_peer:
+        region: us-east-1
+        vpc_id: "{{ vpc_A.vpc.id }}"
+        peer_vpc_id: "{{ vpc_B.vpc.id }}"
+        state: present
+        tags:
+          Name: Peering connection for VPC A to VPC B
+          CostCode: CC1234
+          Project: phoenix
+      register: vpc_peer
+    
+    - debug: var=vpc_peer
+
+    - name: Accept local VPC peering request
+      community.aws.ec2_vpc_peer:
+        region: us-east-1
+        peering_id: "{{ vpc_peer.peering_id }}"
+        state: accept
+      register: action_peer
+    - debug: var=action_peer
+
+    - name: Set up public subnet route table for vpc peering connection
+      community.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc_A.vpc.id }}"
+        region: us-east-1
+        tags:
+          Name: Public
+        subnets:
+          - "{{ public_subnet_vpc_A.subnet.id }}"
+          
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_A.gateway_id }}"
+          - dest: 10.8.0.0/16
+            vpc_peering_connection_id: "{{ vpc_peer.peering_id }}"
+      register: public_route_table_VPC_A
+
+    - name: Set up public subnet route table for vpc peering connection
+      community.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc_B.vpc.id }}"
+        region: us-east-1
+        tags:
+          Name: Public
+        subnets:
+          - "{{ public_subnet_vpc_B.subnet.id }}"
+          
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_B.gateway_id }}"
+          - dest: 172.22.0.0/16
+            vpc_peering_connection_id: "{{ vpc_peer.peering_id }}"
+      register: public_route_table_VPC_B
+
+ 
